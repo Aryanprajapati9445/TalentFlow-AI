@@ -1,0 +1,28 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+crash.log
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Dependencies and generated files
+node_modules/
+dist/
+
+# OS/editor files
+.DS_Store
+.vscode/
+# Terraform state and plans
+**/.terraform/*
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/tfplan
+**/*.tfvars
+**/crash.log
