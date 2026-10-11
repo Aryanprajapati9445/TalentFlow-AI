@@ -1,10 +1,13 @@
+
 name: TalentFlow-AI CI/CD
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -16,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Validate JavaScript syntax
@@ -45,10 +48,36 @@ jobs:
         working-directory: infra/terraform
         run: terraform validate
 
+  inspect-oidc:
+    name: Inspect GitHub OIDC claims
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Request token and print safe claims
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken("sts.amazonaws.com");
+            const payload = JSON.parse(
+              Buffer.from(token.split(".")[1], "base64url").toString()
+            );
+
+            console.log("Issuer:", payload.iss);
+            console.log("Audience:", payload.aud);
+            console.log("Subject:", payload.sub);
+
   deploy:
     name: Deploy static website
-    needs: validate
+    needs:
+      - validate
+      - inspect-oidc
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
     runs-on: ubuntu-latest
 
     permissions:
@@ -58,7 +87,7 @@ jobs:
     environment: production
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials using OIDC
@@ -66,16 +95,17 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: TalentFlowGitHubDeploy
 
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
-      - name: Prepare static website
+      - name: Prepare website files
         run: |
           mkdir -p dist
           cp index.html style.css script.js 1.png dist/
 
-      - name: Upload files to S3
+      - name: Upload website to S3
         run: |
           aws s3 sync dist/ "s3://${{ vars.S3_BUCKET }}/" \
             --delete
@@ -86,16 +116,22 @@ jobs:
             --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths "/*"
 
-      - name: Smoke test
+      - name: Verify deployed website
         env:
           SITE_URL: ${{ vars.SITE_URL }}
         run: |
           for attempt in $(seq 1 12); do
             if curl --fail --silent --show-error \
               "$SITE_URL" -o /tmp/site.html; then
-              grep -qi '<html' /tmp/site.html && exit 0
+              if grep -qi '<html' /tmp/site.html; then
+                echo "Website deployment verified."
+                exit 0
+              fi
             fi
+
+            echo "Waiting for website to become available..."
             sleep 10
           done
-          echo "Deployment verification failed"
+
+          echo "Website verification failed."
           exit 1
